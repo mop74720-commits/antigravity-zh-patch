@@ -1,0 +1,16 @@
+{
+  "name": "antigravity-zh-patch",
+  "version": "1.0.0",
+  "description": "Antigravity 2.0 桌面端纯渲染层 DOM 汉化补丁工具（零依赖、可逆还原、外置词典、更新自动检测与安全中止）",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "status": "node cli.mjs status",
+    "patch": "node cli.mjs patch",
+    "restore": "node cli.mjs restore",
+    "sync-dicts": "node cli.mjs sync-dicts",
+    "update-dicts": "node cli.mjs update-dicts",
+    "check-update": "node cli.mjs check-update",
+    "test": "node test/verify.mjs"
+  }
+}

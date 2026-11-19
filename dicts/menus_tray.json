@@ -1,0 +1,35 @@
+{
+  "exact": {
+    "New Window": "新建窗口",
+    "Docs": "官方文档",
+    "Actual Size": "实际大小",
+    "Zoom In": "放大",
+    "Zoom Out": "缩小",
+    "Connect to WSL": "连接到 WSL",
+    "Reopen Locally": "在本地重新打开",
+    "Open Antigravity": "打开 Antigravity",
+    "Quit": "退出",
+    "No agents running": "暂无运行中的智能体",
+    "Undo": "撤销",
+    "Redo": "重做",
+    "Cut": "剪切",
+    "Copy": "复制",
+    "Paste": "粘贴",
+    "Delete": "删除",
+    "Select All": "全选",
+    "Reload": "重新加载",
+    "Force Reload": "强制重新加载",
+    "Toggle Developer Tools": "切换开发者工具",
+    "Toggle Full Screen": "切换全屏",
+    "Minimize": "最小化",
+    "Zoom": "缩放",
+    "Close": "关闭窗口",
+    "Hide": "隐藏",
+    "Hide Others": "隐藏其他",
+    "Show All": "显示全部"
+  },
+  "regexRules": [
+    { "pattern": "^(\\d+) agents? running$", "replace": "$1 个智能体正在运行" },
+    { "pattern": "^Open (.+)$", "replace": "打开 $1" }
+  ]
+}

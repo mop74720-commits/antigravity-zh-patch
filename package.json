@@ -1,6 +1,6 @@
 {
   "name": "antigravity-zh-patch",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Antigravity 2.0 桌面端纯渲染层 DOM 汉化补丁工具（零依赖、可逆还原、外置词典、更新自动检测与安全中止）",
   "type": "module",
   "private": true,

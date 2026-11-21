@@ -148,6 +148,14 @@
     "replace": "$1 个项目"
   },
   {
+    "pattern": "^Select Sidebar Item ([1-9])$",
+    "replace": "选择侧栏第 $1 项"
+  },
+  {
+    "pattern": "^Show (\\d+) More$",
+    "replace": "再显示 $1 项"
+  },
+  {
     "pattern": "^Start Best-of-(\\d+)$",
     "replace": "启动 Best-of-$1"
   },
@@ -1286,6 +1294,10 @@
   {
     "pattern": "^Zipping\\s+(.+?)(?:…|\\.\\.\\.)?$",
     "replace": "正在压缩 $1…"
+  },
+  {
+    "pattern": "^Retrying transcription \\(attempt (\\d+)\\)…$",
+    "replace": "正在重试转写（第 $1 次）…"
   },
   {
     "pattern": "^Could not attach folder \"(.+?)\":\\s*Folder is empty$",

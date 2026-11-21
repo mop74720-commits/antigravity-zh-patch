@@ -35,6 +35,7 @@
 ### 3. Antigravity 官方更新后如何适配？
 - 当 Antigravity 自动更新到新版本后，新版本的官方 `app.asar` 会覆盖旧文件（外置词典与自定义词条不会丢失）。
 - 只需退出 Antigravity 后再次双击 **`patch.bat`**（或执行 `node cli.mjs check-update` 检测），即可在数秒内完成新版本适配；新版界面新增的未收录英文词条会平滑保留英文，不会白屏或报错。
+- **无感自动适配（推荐）**：也可以直接双击 **`launch-zh.bat`**（或为其创建桌面快捷方式）作为日常启动入口。启动前脚本会自动执行检测，如发现官方刚更新且尚未启动主程序，会自动在 1~2 秒内重打补丁后再打开 Antigravity 2.0。
 
 ### 4. 一键还原为官方原版
 - 退出 Antigravity 2.0 后，双击运行 **`restore.bat`**（或执行 `node cli.mjs restore`）。

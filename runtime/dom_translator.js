@@ -389,6 +389,7 @@
     if (!state) {
       state = {
         enabled: true,
+        userToggled: false,
         exactMap: new Map(),
         lowerExactMap: new Map(),
         regexRules: [],
@@ -409,7 +410,9 @@
       window.__AGY_ZH_STATE__ = state;
     }
 
-    state.enabled = payload && payload.enabled !== false;
+    if (!state.userToggled) {
+      state.enabled = payload && payload.enabled !== false;
+    }
     state.collectUntranslated = Boolean(payload && payload.collectUntranslated);
     var built = buildExactMaps((payload && payload.exact) || {});
     state.exactMap = built.exactMap;
@@ -417,12 +420,8 @@
     state.regexRules = compileRegexRules((payload && payload.regexRules) || []);
     state.unchangedTextMap = new WeakMap();
 
-    function queueUntranslated(core) {
-      if (!state.collectUntranslated) return;
-      if (state.collectedSet.has(core)) return;
-      state.collectedSet.add(core);
-      state.collectQueue.push(core);
-      if (!state.collectTimer) {
+    function scheduleCollectFlush() {
+      if (!state.collectTimer && state.collectQueue.length > 0) {
         state.collectTimer = setTimeout(function () {
           state.collectTimer = null;
           if (state.collectQueue.length > 0) {
@@ -430,9 +429,20 @@
             try {
               console.debug('__AGY_ZH_COLLECT__' + JSON.stringify(batch));
             } catch (_e) {}
+            if (state.collectQueue.length > 0) {
+              scheduleCollectFlush();
+            }
           }
         }, 1200);
       }
+    }
+
+    function queueUntranslated(core) {
+      if (!state.collectUntranslated) return;
+      if (state.collectedSet.has(core)) return;
+      state.collectedSet.add(core);
+      state.collectQueue.push(core);
+      scheduleCollectFlush();
     }
 
     function processTextNode(textNode, skipCache) {
@@ -457,18 +467,26 @@
       var allowShortWord = Boolean(parent && typeof parent.closest === 'function' && parent.closest(UI_CONTROL_SELECTOR));
       var txOpts = { allowShortWord: allowShortWord };
 
+      var translated = null;
       if (typeof orig === 'string') {
         var expectedZh = translateText(orig, state.exactMap, state.regexRules, state.lowerExactMap, txOpts);
-        if (current !== orig && current !== expectedZh) {
+        if (expectedZh !== null && current === expectedZh) {
+          state.translatedTexts.add(textNode);
+          return;
+        }
+        if (current !== orig) {
           // React 更新了此文本节点的英文原文，同步刷新原值记录
           orig = current;
           state.origTextMap.set(textNode, orig);
+          translated = translateText(orig, state.exactMap, state.regexRules, state.lowerExactMap, txOpts);
+        } else {
+          translated = expectedZh;
         }
       } else {
         orig = current;
+        translated = translateText(orig, state.exactMap, state.regexRules, state.lowerExactMap, txOpts);
       }
 
-      var translated = translateText(orig, state.exactMap, state.regexRules, state.lowerExactMap, txOpts);
       if (translated !== null) {
         if (!state.origTextMap.has(textNode)) {
           state.origTextMap.set(textNode, orig);
@@ -700,6 +718,7 @@
         function (e) {
           if (e.ctrlKey && e.altKey && !e.shiftKey && (e.key === 'l' || e.key === 'L')) {
             e.preventDefault();
+            state.userToggled = true;
             state.enabled = !state.enabled;
             state.unchangedTextMap = new WeakMap();
             if (state.enabled) {
@@ -733,9 +752,8 @@
     installDomTranslator: installDomTranslator,
   };
 
+  root.__AGY_ZH_TRANSLATOR__ = api;
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
-  } else {
-    root.__AGY_ZH_TRANSLATOR__ = api;
   }
 })(typeof globalThis !== 'undefined' ? globalThis : window);

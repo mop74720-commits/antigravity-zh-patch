@@ -956,6 +956,10 @@
     "replace": "再查看 $1 项"
   },
   {
+    "pattern": "^See (\\d+) more plugins$",
+    "replace": "再查看 $1 个插件"
+  },
+  {
     "pattern": "^(?:See less|收起) in (.+)$",
     "replace": "在 $1 中收起"
   },

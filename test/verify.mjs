@@ -18,8 +18,8 @@ import {
   verifyAsarArchive,
 } from '../lib/asar.mjs';
 import { sanitizeCommunityEntries, sanitizeRegexPatterns } from '../lib/community_dicts.mjs';
-import { getStatus, PATCH_MARKER, patchAntigravity, restoreAntigravity } from '../lib/patcher.mjs';
-import { checkElectronFuses, classifyAntigravityProcesses, sha256File } from '../lib/safety.mjs';
+import { getStatus, injectHookIntoMain, PATCH_MARKER, patchAntigravity, restoreAntigravity } from '../lib/patcher.mjs';
+import { checkElectronFuses, classifyAntigravityProcesses, sanitizeVersionForFilename, sha256File } from '../lib/safety.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(__dirname, '..');
@@ -31,8 +31,10 @@ const REAL_INSTALL_DIR = path.join(
 const REAL_ASAR = path.join(REAL_INSTALL_DIR, 'resources', 'app.asar');
 const REAL_VERSION_FILE = path.join(REAL_INSTALL_DIR, 'version');
 
-function createSyntheticAsar(destPath) {
-  const pkgBuf = Buffer.from(JSON.stringify({ name: 'synthetic-app', version: '2.33.0', main: 'dist/main.js' }, null, 2), 'utf8');
+function createSyntheticAsar(destPath, version = '2.33.0', pkgOverrides = {}) {
+  const mainRel = pkgOverrides.main || 'dist/main.js';
+  const mainLeaf = path.posix.basename(mainRel);
+  const pkgBuf = Buffer.from(JSON.stringify({ name: 'synthetic-app', version, main: mainRel, ...pkgOverrides }, null, 2), 'utf8');
   const mainBuf = Buffer.from("'use strict';\nconsole.log('boot');\n", 'utf8');
   const constBuf = Buffer.from("'use strict';\nexports.FLAG = 42;\n", 'utf8');
 
@@ -45,7 +47,7 @@ function createSyntheticAsar(destPath) {
       },
       dist: {
         files: {
-          'main.js': {
+          [mainLeaf]: {
             size: mainBuf.length,
             offset: String(pkgBuf.length),
             integrity: computeAsarIntegrity(mainBuf),
@@ -202,7 +204,8 @@ try {
       'Interface Layout': '界面布局',
       '  Give Feedback  ': '  反馈建议.  ',
     });
-    assert.deepEqual(cleaned.entries, {
+    assert.equal(Object.getPrototypeOf(cleaned.entries), null);
+    assert.deepEqual({ ...cleaned.entries }, {
       'Interface Layout': '界面布局',
       'Give Feedback': '反馈建议。',
     });
@@ -215,7 +218,8 @@ try {
       },
       patterns: [],
     });
-    assert.deepEqual(cleanedWrapped.entries, {
+    assert.equal(Object.getPrototypeOf(cleanedWrapped.entries), null);
+    assert.deepEqual({ ...cleanedWrapped.entries }, {
       'Save File': '保存文件。',
     });
 
@@ -451,8 +455,9 @@ try {
   });
 
   runTest('模拟官方自动更新覆盖 app.asar 后自动检测与重新适配', () => {
-    fs.copyFileSync(sourceOriginalAsar, sandboxAsar);
-    fs.writeFileSync(path.join(sandboxInstall, 'version'), '2.99.0', 'utf8');
+    createSyntheticAsar(sandboxAsar, '2.99.0');
+    // 故意保留壳版本 44.9.1，验证以 app.asar 内 package.json 的 2.99.0 为准
+    fs.writeFileSync(path.join(sandboxInstall, 'version'), '44.9.1', 'utf8');
 
     const st = getStatus({
       installDir: sandboxInstall,
@@ -471,6 +476,7 @@ try {
     });
     assert.equal(repatch.action, 'patched');
     assert.equal(repatch.version, '2.99.0');
+    assert.ok(path.basename(repatch.backupPath).startsWith('app.asar.2.99.0.'));
   });
 
   runTest('Electron ASAR Fuse 安全闭环测试（启用/缺失/截断/未知位全部中止，禁用/无Fuse放行）', () => {
@@ -560,14 +566,19 @@ try {
         },
         {
           pid: 9999,
-          commandLine: '"C:\\Users\\User\\AppData\\Local\\Programs\\antigravity\\Antigravity.exe" "C:\\path\\to\\antigravity-zh-patch\\cli.mjs" patch',
+          commandLine: '"C:\\Users\\User\\AppData\\Local\\Programs\\antigravity\\Antigravity.exe" "C:\\path\\to\\custom-dir\\cli.mjs" patch',
+        },
+        {
+          pid: 9998,
+          commandLine: 'node "D:\\zh\\cli.mjs" status',
         },
       ],
       9999
     );
     assert.equal(onlySidecars.running, false);
     assert.deepEqual(onlySidecars.pids, []);
-    assert.deepEqual(onlySidecars.sidecarPids, [1001, 1002]);
+    assert.deepEqual(onlySidecars.sidecarPids, [1001, 1002, 9998]);
+    assert.equal(sanitizeVersionForFilename('2.34/0:bad*'), '2.34_0_bad');
 
     const mixed = classifyAntigravityProcesses(
       [
@@ -589,6 +600,171 @@ try {
     assert.equal(mixed.running, true);
     assert.deepEqual(mixed.pids, [2001, 2002]);
     assert.deepEqual(mixed.sidecarPids, [2003]);
+  });
+
+  runTest('Windows 批处理脚本编码格式（无 BOM + CRLF）与 cmd.exe/GUI 回退执行验证', () => {
+    const batFiles = fs.readdirSync(PROJECT_DIR).filter((f) => f.endsWith('.bat'));
+    assert.ok(batFiles.length >= 6, '应至少包含 6 个 .bat 脚本');
+    for (const f of batFiles) {
+      const buf = fs.readFileSync(path.join(PROJECT_DIR, f));
+      const hasBom = buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf;
+      assert.equal(hasBom, false, `${f} 不得包含 UTF-8 BOM`);
+      const text = buf.toString('utf8');
+      assert.ok(text.includes('\r\n'), `${f} 必须使用 Windows CRLF (\\r\\n) 换行符`);
+      const loneLf = text.replace(/\r\n/g, '').includes('\n');
+      assert.equal(loneLf, false, `${f} 不得包含孤立的 Unix LF (\\n) 换行符`);
+    }
+
+    const runBatText = fs.readFileSync(path.join(PROJECT_DIR, '_run.bat'), 'utf8');
+    assert.ok(runBatText.includes('type "%AGY_TMP_LOG%"'), '_run.bat 应包含 Electron GUI 日志回显逻辑');
+    assert.equal(/if\s+%errorlevel%==0\s*\(/i.test(runBatText), false, '_run.bat 不应使用括号块内的 %errorlevel% 判断');
+
+    const launchBatText = fs.readFileSync(path.join(PROJECT_DIR, 'launch-zh.bat'), 'utf8');
+    assert.ok(launchBatText.includes('--or-unpatched'), 'launch-zh.bat 应传 --or-unpatched 以支持新用户首次自动打补丁');
+    assert.equal(/if\s+defined\s+ANTIGRAVITY_INSTALL_DIR\s*\(/i.test(launchBatText), false, 'launch-zh.bat 不应包含路径括号块');
+
+    if (process.platform === 'win32') {
+      const baseEnv = { ...process.env, AGY_ZH_NO_PAUSE: '1' };
+      delete baseEnv.AGY_ZH_FORCE_ELECTRON;
+      const out = execFileSync(
+        'cmd.exe',
+        ['/c', 'status.bat', '--install-dir', sandboxInstall, '--data-dir', sandboxData],
+        { cwd: PROJECT_DIR, env: baseEnv, encoding: 'utf8' }
+      );
+      assert.ok(out.includes('Antigravity 2.0 汉化补丁状态'), `status.bat 输出异常: ${out}`);
+
+      const realExe = path.join(REAL_INSTALL_DIR, 'Antigravity.exe');
+      if (fs.existsSync(realExe)) {
+        const electronOut = execFileSync(
+          'cmd.exe',
+          ['/c', 'status.bat', '--install-dir', sandboxInstall, '--data-dir', sandboxData],
+          { cwd: PROJECT_DIR, env: { ...baseEnv, AGY_ZH_FORCE_ELECTRON: '1' }, encoding: 'utf8' }
+        );
+        assert.ok(
+          electronOut.includes('Antigravity 2.0 汉化补丁状态'),
+          `Electron 回退回显异常: ${electronOut}`
+        );
+      }
+    }
+  });
+
+  runTest('边界安全与健壮性回归测试（BOM/shebang/minified/.cjs、原型污染、ASAR槽位、CLI参数、用户热切换锁定）', () => {
+    // 1) injectHookIntoMain 兼容 BOM + shebang + 压缩无换行 'use strict';
+    const rawMinified = "\uFEFF#!/usr/bin/env node\n'use strict';var x=1;";
+    const hookedMin = injectHookIntoMain(rawMinified, false);
+    assert.equal(hookedMin.startsWith('\uFEFF#!/usr/bin/env node\n\'use strict\';\n'), true);
+    assert.ok(hookedMin.includes(`${PATCH_MARKER} try { require('./zh_loader.cjs'); }`));
+    assert.ok(hookedMin.endsWith('\nvar x=1;'));
+    new vm.Script(hookedMin.replace(/^\uFEFF/, '').replace(/^#![^\n]*\n/, ''));
+
+    // type: module + main: dist/main.cjs 必须识别为 CommonJS require
+    const cjsInstall = path.join(tmpRoot, 'cjs-install');
+    const cjsData = path.join(tmpRoot, 'cjs-data');
+    const cjsAsar = path.join(cjsInstall, 'resources', 'app.asar');
+    createSyntheticAsar(cjsAsar, '2.35.0', { type: 'module', main: 'dist/main.cjs' });
+    fs.writeFileSync(path.join(cjsInstall, 'Antigravity.exe'), Buffer.from('MZ-dummy-exe'));
+    const cjsPatch = patchAntigravity({ installDir: cjsInstall, dataDir: cjsData, projectDir: PROJECT_DIR, skipProcessCheck: true });
+    assert.equal(cjsPatch.action, 'patched');
+    const patchedCjsMain = readAsarFile(cjsAsar, 'dist/main.cjs').toString('utf8');
+    assert.ok(patchedCjsMain.includes("require('./zh_loader.cjs')"));
+    assert.equal(patchedCjsMain.includes("await import('./zh_loader.cjs')"), false);
+
+    // 2) sanitizeCommunityEntries 抗原型污染
+    const protoPayload = JSON.parse('{"__proto__":"坏","constructor":"坏","prototype":"坏","Valid Button":"有效按钮"}');
+    const protoClean = sanitizeCommunityEntries(protoPayload);
+    assert.equal(Object.getPrototypeOf(protoClean.entries), null);
+    assert.equal(Object.prototype.hasOwnProperty.call(protoClean.entries, '__proto__'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(protoClean.entries, 'constructor'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(protoClean.entries, 'prototype'), false);
+    assert.equal(protoClean.entries['Valid Button'], '有效按钮');
+
+    // 3) ASAR ensureFileSlot 防非法段与目录冲突
+    assert.throws(
+      () => rebuildAsarWithOverrides(synthAsar, path.join(tmpRoot, 'bad1.asar'), { 'dist/__proto__/evil.js': Buffer.from('x') }),
+      /非法段/
+    );
+    assert.throws(
+      () => rebuildAsarWithOverrides(synthAsar, path.join(tmpRoot, 'bad2.asar'), { dist: Buffer.from('x') }),
+      /目录/
+    );
+    assert.throws(
+      () => rebuildAsarWithOverrides(synthAsar, path.join(tmpRoot, 'bad3.asar'), { 'package.json/sub.js': Buffer.from('x') }),
+      /并非目录/
+    );
+
+    // 4) CLI 严格参数校验与 --or-unpatched 退出码协议
+    const cliEnv = { ...process.env, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) };
+    const runCliStatus = (args) => {
+      try {
+        execFileSync(process.execPath, [path.join(PROJECT_DIR, 'cli.mjs'), ...args], {
+          cwd: PROJECT_DIR,
+          env: cliEnv,
+          stdio: 'pipe',
+          encoding: 'utf8',
+        });
+        return 0;
+      } catch (err) {
+        return typeof err.status === 'number' ? err.status : 1;
+      }
+    };
+    assert.equal(runCliStatus(['status', '--all-source']), 1);
+    assert.equal(runCliStatus(['status', '--install-dir']), 1);
+    assert.equal(runCliStatus(['status', '--install-dir', '--data-dir', cjsData]), 1);
+
+    const unpatchedInstall = path.join(tmpRoot, 'cli-unpatched');
+    const unpatchedData = path.join(tmpRoot, 'cli-unpatched-data');
+    createSyntheticAsar(path.join(unpatchedInstall, 'resources', 'app.asar'), '2.35.0');
+    fs.writeFileSync(path.join(unpatchedInstall, 'Antigravity.exe'), Buffer.from('MZ-dummy-exe'));
+    assert.equal(runCliStatus(['check-update', '--install-dir', unpatchedInstall, '--data-dir', unpatchedData]), 0);
+    assert.equal(runCliStatus(['check-update', '--or-unpatched', '--install-dir', unpatchedInstall, '--data-dir', unpatchedData]), 2);
+
+    // 5) dom_translator 兼容 module.exports 共存与 Ctrl+Alt+L 手动切换锁定不被二次注入覆盖
+    const dtCode = fs.readFileSync(path.join(PROJECT_DIR, 'runtime', 'dom_translator.js'), 'utf8');
+    let keydownCb = null;
+    const fakeDocEl = { nodeType: 1, tagName: 'DIV', closest: () => null, getRootNode: () => null, getAttribute: () => null };
+    const fakeWin = {
+      electronNative: {},
+      addEventListener: (ev, cb) => {
+        if (ev === 'keydown') keydownCb = cb;
+      },
+    };
+    const fakeDoc = {
+      documentElement: fakeDocEl,
+      createTreeWalker: () => ({ nextNode: () => null }),
+      getElementById: () => null,
+      createElement: () => ({ setAttribute: () => {}, style: {}, remove: () => {}, isConnected: false }),
+    };
+    function FakeMutationObserver() {
+      this.observe = () => {};
+    }
+    const sandboxGlobal = {
+      module: { exports: {} },
+      exports: {},
+      window: fakeWin,
+      document: fakeDoc,
+      MutationObserver: FakeMutationObserver,
+      Set,
+      Map,
+      WeakMap,
+      RegExp,
+      setTimeout: () => 1,
+      Object,
+    };
+    sandboxGlobal.exports = sandboxGlobal.module.exports;
+    sandboxGlobal.globalThis = sandboxGlobal;
+    vm.runInNewContext(dtCode, sandboxGlobal);
+    assert.equal(typeof sandboxGlobal.__AGY_ZH_TRANSLATOR__, 'object');
+    assert.equal(typeof sandboxGlobal.module.exports.installDomTranslator, 'function');
+
+    sandboxGlobal.__AGY_ZH_TRANSLATOR__.installDomTranslator({ enabled: true, exact: { Foo: '福' }, regexRules: [] });
+    assert.equal(fakeWin.__AGY_ZH_STATE__.enabled, true);
+    assert.ok(typeof keydownCb === 'function');
+    keydownCb({ ctrlKey: true, altKey: true, shiftKey: false, key: 'l', preventDefault: () => {} });
+    assert.equal(fakeWin.__AGY_ZH_STATE__.enabled, false);
+    assert.equal(fakeWin.__AGY_ZH_STATE__.userToggled, true);
+    // 二次注入时 payload.enabled=true 不得覆盖用户手动关闭的英文模式
+    sandboxGlobal.__AGY_ZH_TRANSLATOR__.installDomTranslator({ enabled: true, exact: { Foo: '福' }, regexRules: [] });
+    assert.equal(fakeWin.__AGY_ZH_STATE__.enabled, false);
   });
 
   console.log('\n全部自动化测试通过（沙盒内操作，未对真实安装目录做任何写入）。');

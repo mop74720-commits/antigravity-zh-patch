@@ -13,27 +13,42 @@ function parseArgs(argv) {
   let dataDir;
   let allSources = false;
   let localOnly = false;
+  let orUnpatched = false;
   let help = false;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '-h' || a === '--help') {
       help = true;
-    } else if (a === '--install-dir' && args[i + 1]) {
-      installDir = args[++i];
-    } else if (a === '--data-dir' && args[i + 1]) {
-      dataDir = args[++i];
+    } else if (a === '--install-dir') {
+      const val = args[i + 1];
+      if (!val || val.startsWith('-')) {
+        throw new Error('选项 --install-dir 缺少有效的目录参数');
+      }
+      installDir = val;
+      i++;
+    } else if (a === '--data-dir') {
+      const val = args[i + 1];
+      if (!val || val.startsWith('-')) {
+        throw new Error('选项 --data-dir 缺少有效的目录参数');
+      }
+      dataDir = val;
+      i++;
     } else if (a === '--all-sources') {
       allSources = true;
       localOnly = true;
     } else if (a === '--local-only') {
       localOnly = true;
-    } else if (!a.startsWith('-')) {
+    } else if (a === '--or-unpatched') {
+      orUnpatched = true;
+    } else if (a.startsWith('-')) {
+      throw new Error(`未知选项：${a}（请使用 --help 查看支持的选项）`);
+    } else {
       command = a;
     }
   }
 
-  return { command, installDir, dataDir, allSources, localOnly, help };
+  return { command, installDir, dataDir, allSources, localOnly, orUnpatched, help };
 }
 
 function printHelp() {
@@ -56,6 +71,7 @@ Antigravity 2.0 桌面端纯 DOM 汉化补丁工具
   --data-dir <dir>      指定词典与备份目录（默认 ~/.antigravity-zh）
   --all-sources         （仅 update-dicts）额外合并个人本地补充词库（仅写入用户目录）
   --local-only          （仅 update-dicts）仅写入用户目录，不修改仓库 dicts/
+  --or-unpatched        （仅 check-update）未打补丁时同样返回退出码 2（供启动脚本使用）
   -h, --help            显示帮助信息
 
 界面快捷键（生效后）：
@@ -132,8 +148,8 @@ async function main() {
     console.log(`当前 SHA256: ${st.asarSha256}`);
 
     if (opts.command === 'check-update') {
-      if (st.state === 'needs-repatch') {
-        console.log('\n[提示] 检测到官方客户端已更新覆盖 app.asar，请退出 Antigravity 后运行 patch 重新适配。');
+      if (st.state === 'needs-repatch' || (opts.orUnpatched && st.state === 'unpatched')) {
+        console.log('\n[提示] 检测到当前客户端需要应用或重新适配汉化补丁，请退出 Antigravity 后运行 patch。');
         process.exitCode = 2;
       } else if (st.state === 'fuse-blocked') {
         process.exitCode = 3;
